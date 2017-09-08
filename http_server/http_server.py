@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import socket
+import threading
 from time import strftime, gmtime
 
 
@@ -22,13 +23,14 @@ class HTTP_Server():
                                "\r\nContent-Type: {}\r\nContent-Length: {}" +\
                                "\r\n\n{}"
     rfc7231_date_template = "%a, %d %b %Y %H:%M:%S GMT"
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
 
-    def __init__(self, host='', port=0):
+    def __init__(self, host='', port=59383):
         self.host = host
         self.port = port
         self.server_name = 'ArchServer'
         self.logger = logging.getLogger(__name__)
+        self.file_access_count = {}
         self._set_mime_types()
 
     def listen(self, server_socket):
@@ -46,27 +48,35 @@ class HTTP_Server():
             self.logger.debug('Reply message : %s' % reply)
             client_socket.send(reply)
             client_socket.close()
+            if not '404' in reply:
+                print("/%s|%s|%d|%d" % (requested_file, client_ip[0],
+                      client_ip[1], self.file_access_count[requested_file]))
 
     def _make_response(self, **kwargs):
-        requested_file = os.path.join(self.resource_dir,
-                                      kwargs['requested_file'])
+        requested_file = kwargs['requested_file']
+        file_path = os.path.join(self.resource_dir, requested_file)
         response = ""
-        if os.path.exists(requested_file):
+        if os.path.exists(file_path):
             file_content = ""
-            with open(requested_file, 'rb') as fin:
+            with open(file_path, 'rb') as fin:
                 file_content = fin.read()
             response_code = self.status_codes[200]
+            if requested_file in self.file_access_count:
+                self.file_access_count[requested_file] += 1
+            else:
+                self.file_access_count[requested_file] = 1
         else:
             return self.response_status.format(self.status_codes[404])
+
         date = strftime(self.rfc7231_date_template, gmtime())
-        modified_date = gmtime(os.path.getmtime(requested_file))
+        modified_date = gmtime(os.path.getmtime(file_path))
         last_modified_date = strftime(self.rfc7231_date_template, modified_date)
         file_ext = requested_file.split('.')[-1]
         if file_ext in self.mime_types.keys():
             content_type = self.mime_types[file_ext]
         else:
             content_type = self.default_mime_type
-        content_length = os.path.getsize(requested_file)
+        content_length = os.path.getsize(file_path)
 
         response = self.response_header_template.format(date, self.server_name,
                                                         last_modified_date,
