@@ -25,7 +25,7 @@ class HTTP_Server():
     rfc7231_date_template = "%a, %d %b %Y %H:%M:%S GMT"
     logging.basicConfig(level=logging.DEBUG)
 
-    def __init__(self, host='', port=59383):
+    def __init__(self, host='', port=0):
         self.host = host
         self.port = port
         self.server_name = 'ArchServer'
@@ -33,11 +33,7 @@ class HTTP_Server():
         self.file_access_count = {}
         self._set_mime_types()
 
-    def listen(self, server_socket):
-        server_socket.listen(5)
-        self.logger.info("Server listening at %s:%s" % (self.host, self.port))
-        while True:
-            client_socket, client_ip = server_socket.accept()
+    def listen(self, client_socket, client_ip):
             self.logger.info("Connection request from client %s" %
                              str(client_ip))
             msg = client_socket.recv(1024).decode('ascii')
@@ -45,10 +41,11 @@ class HTTP_Server():
             self.logger.debug("Requested file from client: %s" %
                               requested_file)
             reply = self._make_response(**{'requested_file': requested_file})
-            self.logger.debug('Reply message : %s' % reply)
-            client_socket.send(reply)
+            self.logger.debug('Reply message : %s' % reply[:50])
+            bytes_sent = client_socket.send(reply)
+            print("Bytes sent: %s" % bytes_sent)
             client_socket.close()
-            if not '404' in reply:
+            if self.status_codes[404] not in reply:
                 print("/%s|%s|%d|%d" % (requested_file, client_ip[0],
                       client_ip[1], self.file_access_count[requested_file]))
 
@@ -102,7 +99,15 @@ class HTTP_Server():
             self.logger.debug("Server bind at address %s:%s." %
                               (self.host, self.port))
             print("Host: %s, Port:%s" % (self.host, self.port))
-            self.listen(server_socket)
+            server_socket.listen(5)
+            self.logger.info("Server listening at %s:%s" %
+                             (self.host, self.port))
+            while True:
+                client_socket, client_ip = server_socket.accept()
+                thread_args = (client_socket, client_ip)
+                client_thread = threading.Thread(target=self.listen,
+                                                 args=thread_args)
+                client_thread.start()
         except Exception as e:
             print(e)
         finally:
