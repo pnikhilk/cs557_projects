@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import socket
+import sys
 import threading
 from time import strftime, gmtime
 
@@ -35,28 +36,39 @@ class HTTP_Server():
         self._set_mime_types()
 
     def listen(self, client_socket, client_ip):
-            self.logger.info("Connection request from client %s" %
-                             str(client_ip))
-            msg = client_socket.recv(1024).decode('ascii')
+        """
+        Serve the request to client
+        :param client_socket: Socket object for client
+        :param client_ip: IP address of client
+        """
+        self.logger.info("Connection request from client %s" %
+                         str(client_ip))
+        msg = client_socket.recv(1024).decode('ascii')
 
-            parsed_request = re.search(r'GET /(.+) HTTP/1..*', msg)
-            if parsed_request:
-                requested_file = parsed_request.group(1)
-                self.logger.debug("Requested file from client: %s" %
-                                  requested_file)
-                reply = self._make_response(**{'requested_file': requested_file})
-                self.logger.debug('Reply message : %s' % reply[:50])
-                bytes_sent = client_socket.send(reply)
-                self.logger.debug("Bytes sent: %s" % bytes_sent)
-                client_socket.close()
-                if self.status_codes[404] not in reply:
-                    with self.file_access_count[requested_file][0]:
-                        count = self.file_access_count[requested_file][1] + 1
-                        self.file_access_count[requested_file][1] = count
-                        print("/%s|%s|%d|%d" % (requested_file, client_ip[0],
-                                                client_ip[1], count))
+        parsed_request = re.search(r'GET /(.+) HTTP/1..*', msg)
+        if parsed_request:
+            requested_file = parsed_request.group(1)
+            self.logger.debug("Requested file from client: %s" %
+                              requested_file)
+            reply = self._make_response(**{'requested_file': requested_file})
+            self.logger.debug('Reply message : %s' % reply[:50])
+            bytes_sent = client_socket.send(reply)
+            self.logger.debug("Bytes sent: %s" % bytes_sent)
+            client_socket.close()
+            if self.status_codes[404] not in reply:
+                # If file file found, check thread lock for file
+                with self.file_access_count[requested_file][0]:
+                    count = self.file_access_count[requested_file][1] + 1
+                    self.file_access_count[requested_file][1] = count
+                    print("/%s|%s|%d|%d" % (requested_file, client_ip[0],
+                                            client_ip[1], count))
+        else:
+            self.logger.error("Invalid request from client.")
 
     def _make_response(self, **kwargs):
+        """
+        Create response header for requested file
+        """
         requested_file = kwargs['requested_file']
         file_path = os.path.join(self.resource_dir, requested_file)
         response = ""
@@ -86,6 +98,9 @@ class HTTP_Server():
         return self.response_status.format(response_code) + response
 
     def _set_mime_types(self):
+        """
+        Parse /etc/mime.types file for each file extension
+        """
         with open('/etc/mime.types') as fin:
             for line in fin.readlines():
                 if '\t' in line:
@@ -94,12 +109,18 @@ class HTTP_Server():
                         self.mime_types[ext] = mime_type
 
     def _set_files(self):
+        """
+        Get info for all the files vailabel in resource directory.
+        """
         for root, dirs, files in os.walk(self.resource_dir):
             for fname in files:
                 f = os.path.join(root, fname).split("/", 1)[1]
                 self.file_access_count[f] = [threading.Lock(), 0]
 
     def run_server(self):
+        """
+        Start the server on random port and assign thread to each client request.
+        """
         try:
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_socket.bind((self.host, self.port))
@@ -111,17 +132,21 @@ class HTTP_Server():
             server_socket.listen(5)
             self.logger.info("Server listening at %s:%s" %
                              (self.host, self.port))
+            threads = []
             while True:
                 client_socket, client_ip = server_socket.accept()
                 thread_args = (client_socket, client_ip)
                 client_thread = threading.Thread(target=self.listen,
                                                  args=thread_args)
+                threads.append(client_thread)
                 client_thread.start()
         except Exception as e:
             self.logger.error(e)
         except KeyboardInterrupt:
             pass
         finally:
+            for thread in threads:
+                thread.join()
             server_socket.close()
             self.logger.info("Server connection closed.")
 
@@ -129,4 +154,4 @@ class HTTP_Server():
 if __name__ == '__main__':
     soc = HTTP_Server()
     soc.run_server()
-    exit()
+    sys.exit(0)
