@@ -94,8 +94,10 @@ class HTTP_Server():
                         self.mime_types[ext] = mime_type
 
     def _set_files(self):
-        for f in os.listdir(self.resource_dir):
-            self.file_access_count[f] = [threading.Lock(), 0]
+        for root, dirs, files in os.walk(self.resource_dir):
+            for fname in files:
+                f = os.path.join(root, fname).split("/", 1)[1]
+                self.file_access_count[f] = [threading.Lock(), 0]
 
     def run_server(self):
         try:
@@ -127,3 +129,4 @@ class HTTP_Server():
 if __name__ == '__main__':
     soc = HTTP_Server()
     soc.run_server()
+    exit()
