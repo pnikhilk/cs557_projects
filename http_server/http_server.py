@@ -23,6 +23,9 @@ class HTTP_Server():
     response_header_template = "Date: {}\r\nServer: {}\r\nLast-Modified: {}" +\
                                "\r\nContent-Type: {}\r\nContent-Length: {}" +\
                                "\r\n\n{}"
+    page = "<html>\n<title> Resource not found </title>\n<body>" +\
+        "<h1>404 Not Found </h1> <p> Requested resource not available.<p>" +\
+        "</body></html>"
     rfc7231_date_template = "%a, %d %b %Y %H:%M:%S GMT"
     logging.basicConfig(level=logging.ERROR)
 
@@ -32,7 +35,7 @@ class HTTP_Server():
         self.server_name = 'HTTP Server/Python 2.7'
         self.logger = logging.getLogger(__name__)
         self.file_access_count = {}
-        self._set_files()
+        # self._set_files()
         self._set_mime_types()
 
     def listen(self, client_socket, client_ip):
@@ -63,7 +66,8 @@ class HTTP_Server():
                     print("/%s|%s|%d|%d" % (requested_file, client_ip[0],
                                             client_ip[1], count))
         else:
-            self.logger.error("Invalid request from client.")
+            self.logger.warning("Invalid request from client.")
+            self.logger.warning(msg)
 
     def _make_response(self, **kwargs):
         """
@@ -78,7 +82,11 @@ class HTTP_Server():
                 file_content = fin.read()
             response_code = self.status_codes[200]
         else:
-            return self.response_status.format(self.status_codes[404])
+            error_response_header = "Content-Type: text/html\r\n" +\
+                                    "Content-Length: {}\r\n\n{}"
+            response = self.response_status.format(self.status_codes[404]) +\
+                error_response_header.format(len(self.page), self.page)
+            return response
 
         date = strftime(self.rfc7231_date_template, gmtime())
         modified_date = gmtime(os.path.getmtime(file_path))
@@ -112,16 +120,21 @@ class HTTP_Server():
         """
         Get info for all the files vailabel in resource directory.
         """
+        if not os.path.exists(self.resource_dir):
+            raise IOError('Resource directory "www" does not exists. Exiting..')
+
         for root, dirs, files in os.walk(self.resource_dir):
             for fname in files:
                 f = os.path.join(root, fname).split("/", 1)[1]
-                self.file_access_count[f] = [threading.Lock(), 0]
+                if f not in self.file_access_count.keys():
+                    self.file_access_count[f] = [threading.Lock(), 0]
 
     def run_server(self):
         """
         Start the server on random port and assign thread to each client request.
         """
         try:
+            threads = []
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_socket.bind((self.host, self.port))
             self.host = socket.gethostbyaddr(socket.gethostname())[0]
@@ -129,17 +142,20 @@ class HTTP_Server():
             self.logger.debug("Server bind at address %s:%s." %
                               (self.host, self.port))
             print("Server is started on %s:%s" % (self.host, self.port))
+            self._set_files()
             server_socket.listen(5)
             self.logger.info("Server listening at %s:%s" %
                              (self.host, self.port))
-            threads = []
             while True:
                 client_socket, client_ip = server_socket.accept()
+                self._set_files()
                 thread_args = (client_socket, client_ip)
                 client_thread = threading.Thread(target=self.listen,
                                                  args=thread_args)
                 threads.append(client_thread)
                 client_thread.start()
+        except IOError as e:
+            raise e
         except Exception as e:
             self.logger.error(e)
         except KeyboardInterrupt:
@@ -152,6 +168,12 @@ class HTTP_Server():
 
 
 if __name__ == '__main__':
-    soc = HTTP_Server()
-    soc.run_server()
-    sys.exit(0)
+    try:
+        soc = HTTP_Server()
+        soc.run_server()
+        sys.exit(0)
+    except IOError as e:
+        print(e)
+        sys.exit(1)
+    except Exception as e:
+        soc.logger.error(e)
